@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 if __name__ == "__main__":
     folder = "output\\"
+    
     _rand = random.Random
 
     xdoc = ET.parse("samples.xml")
@@ -23,7 +24,7 @@ if __name__ == "__main__":
         size = int(xelem.get("size", 48 if isOverlapping else 24))
         width = int(xelem.get("width", size))
         height = int(xelem.get("height", size))
-        periodic = xelem.get("periodic", False)
+        periodic = bool(xelem.get("periodic", False))
         heuristicString = xelem.get("heuristic")
         heuristic = Model.Heuristic.Scanline if heuristicString == "Scanline" else (Model.Heuristic.MRV if heuristicString == "MRV" else Model.Heuristic.Entropy)
 
@@ -46,17 +47,17 @@ if __name__ == "__main__":
         
 
         #for (int i = 0; i < xelem.Get("screenshots", 2); i++):
-        for i in range(len(xelem.get("screenshots", 2))):
+        for i in range(int(xelem.get("screenshots", 2))):
             #for (int k = 0; k < 10; k++):
             for k in range(10):
                 print("> ")
-                seed = random.Next()
-                success = model.Run(seed, xelem.Get("limit", -1))
+                seed = random.randint(0, 1234123)
+                success = model.Run(seed, int(xelem.get("limit", -1)))
                 if (success):
                     print("DONE")
                     #Console.WriteLine("DONE")
                     model.Save(f"output/{name} {seed}.png")
-                    if (model is SimpleTiledModel and xelem.Get("textOutput", False)):
+                    if (model is SimpleTiledModel and xelem.get("textOutput", False)):
                         with open('output.txt', 'rw') as f:
                             f.writelines(model.TextOutput())
                         # System.IO.File.WriteAllText(f"output/{name} {seed}.txt", stmodel.TextOutput())

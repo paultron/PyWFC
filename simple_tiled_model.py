@@ -1,3 +1,5 @@
+from enum import Enum
+from math import floor
 from typing import Optional
 import xml.etree.ElementTree as ET
 from model import Model
@@ -5,14 +7,22 @@ from helper import BitmapHelper
 import numpy as np
 
 class SimpleTiledModel(Model):
-    tiles: list[list[int]]
-    tile_names: list[str]
 
-    tile_size : int
-    black_background: bool
+    # tiles: list[list[int]]
+    # tile_names: list[str]
+
+    # tile_size : int
+    # black_background: bool
 
     def __init__(self, name: str, subset_name: str | None, width: int, heigth: int, periodic: bool, black_bg: bool, heuristic):
         super().__init__(width, heigth, 1, periodic, heuristic)
+        
+        self.tiles: list[list[int]]
+        self.tile_names: list[str]
+
+        self.tile_size : int
+        # self.black_background: bool
+        
         self.black_background = black_bg
         xroot = ET.parse(f"tilesets/{name}.xml").getroot()
         unique = xroot.get("unique", False)
@@ -20,14 +30,14 @@ class SimpleTiledModel(Model):
         self.subset = None
 
         if subset_name != None:
-            xsubset: ET.Element = next([e for e in xroot.find("subsets").findall("subset") if e.get("name") == subset_name], None)
-            if xsubset == None: 
+            xsubset = next(iter([e for e in xroot.find("subsets").findall("subset") if e.get("name") == subset_name]), None)
+            if xsubset is None: 
                 print(f"ERROR: subset {subset_name} is not found")
             else: 
-                self.subset = xsubset.findall("tile")
+                self.subset = [e.get("name") for e in xsubset.findall("tile")]
 
-        def tile(f, size):
-            result = np.empty(size * size)
+        def tile(f, size: int):
+            result = np.empty(size * size, np.int32)
             for y in range(size):
                 for x in range(size):
                     result[x + y * size] = f(x, y)
@@ -36,12 +46,12 @@ class SimpleTiledModel(Model):
         rotate = lambda array, size : tile(lambda x, y : array[size - 1 - y + x * size], size)
         reflect = lambda array, size : tile(lambda x, y : array[size - 1 - x + y * size], size)
 
-        self.tiles: list[list[int]] = [[]]
+        self.tiles: list[list[int]] = []
         self.tile_names: list[str] = []
 
         self.weight_list : list[float] = []
 
-        self.action: list[list[int]] = [[]]
+        self.action: list[list[int]] = []
         self.first_occurance: dict[str, int] = {}
 
         for xtile in xroot.find("tiles").findall("tile"):
@@ -76,7 +86,7 @@ class SimpleTiledModel(Model):
                     a = lambda i : i
                     b = lambda i : i
 
-            self._T  = len(self.action)
+            self._T = len(self.action)
             self.first_occurance[tile_name] = self._T
 
             _map = np.empty([cardinality,8])
@@ -99,29 +109,31 @@ class SimpleTiledModel(Model):
 
             if (unique):
                 for t in range(cardinality):
-                    # TODO load bitmap, bitmaphelper
-                    bitmap, tile_size, tile_size = [1], 8, 12
+                    bitmap, tile_sizeX, tile_sizeY = BitmapHelper.LoadBitmap(f"tilesets/{name}/{tile_name} {t}.png")
+                    self.tile_size = tile_sizeX
                     self.tiles.append(bitmap)
                     self.tile_names.append(f"{tile_name} {t}")
             else: 
-                # TODO load bitmap, bitmaphelper
-                bitmap, tile_size, tile_size = [1], 8, 12
+                bitmap, tile_sizeX, tile_sizeY = BitmapHelper.LoadBitmap(f"tilesets/{name}/{tile_name}.png")
+                self.tile_size = tile_sizeX
                 self.tiles.append(bitmap)
                 self.tile_names.append(f"{tile_name} 0")
 
-                for t in range(cardinality):
-                    if (t <= 3): self.tiles.append(rotate(self.tiles[self._T + t - 1], tile_size))
-                    if (t >= 4): self.tiles.append(reflect(self.tiles[self._T + t - 4], tile_size))
+                for t in range(1, cardinality):
+                    if (t <= 3): 
+                        self.tiles.append(rotate(self.tiles[self._T + t - 1], self.tile_size))
+                    if (t >= 4): 
+                        self.tiles.append(reflect(self.tiles[self._T + t - 4], self.tile_size))
                     self.tile_names.append(f"{tile_name} {t}")
 
             for t in range(cardinality):
-                self.weight_list.append(xtile.get("weight", 1.0))
+                self.weight_list.append(float(xtile.get("weight", 1.0)))
 
         self._T = len(self.action)
         self._weights = self.weight_list.copy()
 
-        self._propagator = np.empty([4, self._T])
-        dense_propagator = np.array([4, self._T, self._T], dtype=bool)
+        self._propagator = np.empty([4, self._T, 1], dtype=np.int32)
+        dense_propagator = np.empty([4, self._T, self._T], dtype=bool)
 
         for xneighbor in xroot.find("neighbors").findall("neighbor"):
             left = xneighbor.get("left").split()
@@ -130,27 +142,27 @@ class SimpleTiledModel(Model):
             if ((self.subset is not None) and ((left[0] not in self.subset) or (right[0] not in self.subset))):
                 continue
 
-            L = int(self.action[self.first_occurance[left[0]]][0 if len(left) == 1 else int(left[1])])
+            L = self.action[self.first_occurance[left[0]]][0 if len(left) == 1 else int(left[1])]
             D = self.action[L][1]
-            R = int(self.action[self.first_occurance[right[0]]][0 if len(right) == 1 else int(right[1])])
+            R = self.action[self.first_occurance[right[0]]][0 if len(right) == 1 else int(right[1])]
             U = self.action[R][1]
 
             dense_propagator[0][R][L] = True
-            dense_propagator[0][self.action[R][6]][self.action[L][6]] = True
-            dense_propagator[0][self.action[L][4]][self.action[R][4]] = True
-            dense_propagator[0][self.action[L][2]][self.action[R][2]] = True
+            dense_propagator[0][int(self.action[R][6])][int(self.action[L][6])] = True
+            dense_propagator[0][int(self.action[L][4])][int(self.action[R][4])] = True
+            dense_propagator[0][int(self.action[L][2])][int(self.action[R][2])] = True
 
             dense_propagator[1][U][D] = True
-            dense_propagator[1][self.action[D][6]][self.action[U][6]] = True
-            dense_propagator[1][self.action[U][4]][self.action[D][4]] = True
-            dense_propagator[1][self.action[D][2]][self.action[U][2]] = True
+            dense_propagator[1][int(self.action[D][6])][int(self.action[U][6])] = True
+            dense_propagator[1][int(self.action[U][4])][int(self.action[D][4])] = True
+            dense_propagator[1][int(self.action[D][2])][int(self.action[U][2])] = True
 
         for t2 in range(self._T):
             for t1 in range(self._T):
                 dense_propagator[2][t2][t1] = dense_propagator[0][t1][t2]
                 dense_propagator[3][t2][t1] = dense_propagator[1][t1][t2]
 
-        sparse_propagator = np.empty([4, self._T])
+        sparse_propagator = np.zeros([4, self._T, 1], dtype=np.int32)
 
         for d in range(4):
             for t1 in range(self._T):
@@ -159,7 +171,7 @@ class SimpleTiledModel(Model):
                 
                 for t2 in range(self._T):
                     if (tp[t2]):
-                        sp.append(t2)
+                        sp = np.append(sp, t2)
 
                 ST = len(sp)
                 if (ST == 0):
@@ -170,21 +182,22 @@ class SimpleTiledModel(Model):
                 for st in range(ST):
                     self._propagator[d][t1][st] = sp[st]
 
-        
+        super().Init()
+
     def Save(self, filename:str):
-        bitmap_data = np.empty(self._MX * self._MY * self.tile_size * self.tile_size)
+        bitmap_data = np.empty((self._MX * self._MY * self.tile_size * self.tile_size, 1))
 
         if self._observed[0] >= 0:
             for x in range(self._MX):
                 for y in range(self._MY):
-                    tile = self.tiles[self._observed[x + y * self._MX]]
+                    tile = self.tiles[self._observed[int(x + y * self._MX)]]
                     for dy in range(self.tile_size):
                         for dx in range(self.tile_size):
                             bitmap_data[x * self.tile_size + dx + (y * self.tile_size + dy) * self._MX * self.tile_size] = tile[dx + dy * self.tile_size]
         else:
             for i in range(len(self._wave)):
                 x = i % self._MX
-                y = i / self._MX
+                y = floor(i / self._MX)
                 if (self.black_background and self._sumsOfOnes[i] == self._T):
                     for yt in range(self.tile_size):
                         for xt in range(self.tile_size):
@@ -195,15 +208,16 @@ class SimpleTiledModel(Model):
                     for yt in range(self.tile_size):
                         for xt in range(self.tile_size):
                             idi = x * self.tile_size + xt + (y * self.tile_size + yt) * self._MX * self.tile_size
-                            r = 0.0
-                            g = 0.0
-                            b = 0.0
+                            r = 0
+                            g = 0
+                            b = 0
                             for t in range(self._T):
-                                argb = self.tiles[t][xt + yt * self.tile_size]
-                                r += ((argb & 0xff0000) >> 16) * self._weights[t] * normalization
-                                g += ((argb & 0xff00) >> 8) * self._weights[t] * normalization
-                                b +=  (argb & 0xff) * self._weights[t] * normalization
-                            bitmap_data[idi] = [r, g, b, 255] #int(0xff000000) | int(r) << 16 | int(g) << 8 | int(b)
+                                if w[t]:
+                                    argb = self.tiles[t][xt + yt * self.tile_size]
+                                    r += ((argb & 0xff0000) >> 16) * self._weights[t] * normalization
+                                    g += ((argb & 0xff00) >> 8) * self._weights[t] * normalization
+                                    b +=  (argb & 0xff) * self._weights[t] * normalization
+                            bitmap_data[idi] = int(0xff000000) | int(r) << 16 | int(g) << 8 | int(b)
 
         BitmapHelper.SaveBitmap(bitmap_data, self._MX * self.tile_size, self._MY * self.tile_size, filename)
 

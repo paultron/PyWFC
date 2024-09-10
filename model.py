@@ -6,47 +6,48 @@ from typing import Optional
 from helper import Helper
 
 class Model:
-    _wave : Optional[np.ndarray] # 2d
-
-    _propagator : np.ndarray # 3d
-    compatible : np.ndarray # 3d
-    _observed : list[int] # 1d
-
-    stack : list[tuple[int, int]] # (int, int)
-    stacksize : int
-    observedSoFar : int
-
-    _MX: int
-    _MY : int
-    _MXY : int
-    _T : int
-    _N : int
-
-    _periodic : bool
-    _ground : bool
-
-    _weights : list[float]
-    weightLogWeights : list[float]
-    distribution : list[float]
-
-    _sumsOfOnes : list[int]
-    sumOfWeights : float
-    sumOfWeightLogWeights : float
-    startingEntropy : float
-
-    _sumsOfWeights : list[float]
-    _sumsOfWeightLogWeights : list[float]
-    _entropies : list[float]
-
-    dx = [-1,0,1,0]
-    dy = [0,1,0,-1]
+    dx = [-1, 0, 1, 0]
+    dy = [ 0, 1, 0,-1]
     opposite = [2,3,0,1]
 
     Heuristic = Enum('Heuristic', ['Entropy', 'MRV', 'Scanline'])
 
-    heuristic : Heuristic
-
     def __init__(self, width:int, height:int, N, periodic, heuristic):
+        self.new = True
+        self._wave : Optional[np.ndarray] = None # 2d
+
+        self._propagator : np.ndarray = np.empty([],dtype=np.int32) # 3d 
+        self.compatible : np.ndarray # 3d
+        self._observed : list[int] # 1d
+
+        self.stack : list[tuple[int, int]] # (int, int)
+        self.stacksize : int
+        self.observedSoFar : int
+
+        self._MX: int
+        self._MY : int
+        self._MXY : int
+        self._T : int
+        self._N : int
+
+        self._periodic : bool = False
+        self._ground : bool = False
+
+        self._weights : list[float] = np.array([], dtype=np.double)
+        self.weightLogWeights : list[float]= np.array([], dtype=np.double)
+        self.distribution : list[float]= np.array([], dtype=np.double)
+
+        self._sumsOfOnes : list[int] = np.array([],dtype=np.int32)
+        self.sumOfWeights : float = 0.0
+        self.sumOfWeightLogWeights : float = 0.0
+        self.startingEntropy : float = 0.0
+
+        self._sumsOfWeights : list[float] = np.array([], dtype=np.double)
+        self._sumsOfWeightLogWeights : list[float] = np.array([], dtype=np.double)
+        self._entropies : list[float] = np.array([], dtype=np.double)
+        
+        # -----
+
         self._MX = width
         self._MY = height
         self._MXY = width * height
@@ -55,47 +56,44 @@ class Model:
         self.heuristic = heuristic
 
         # ... other member variables
+        
 
     def Init(self):
         # ... initialization code
-        self._wave = np.empty([self._MXY, self._T])
-        self.compatible = np.empty([len(self._wave), self._T, 4])
+        self._wave = np.empty([self._MXY, self._T], dtype=bool)
+        self.compatible = np.empty([len(self._wave), self._T, 4], dtype=np.int32)
 
-        #for i in range(len(self._wave)):
-            #self._wave[i] = np.empty(self._T, dtype=bool)
-            #self.compatible[i] = np.empty(self._T)
-            #for t in range(self._T):
-                #self.compatible[i][t] = np.empty(4)
+        self.distribution = np.empty(self._T, dtype=np.double)
+        self._observed = np.empty(self._MXY, dtype=np.int32)
 
-        self.distribution = np.empty(self._T)
-        self._observed = np.empty(self._MXY)
-
-        self.weightLogWeights = np.empty(self._T)
-        self.sumOfWeights = 0
-        self.sumOfWeightLogWeights = 0
+        self.weightLogWeights = np.empty(self._T, dtype=np.double)
+        self.sumOfWeights = 0.0
+        self.sumOfWeightLogWeights = 0.0
 
         for t in range(self._T):
-            self.weightLogWeights[t] = self._weights[t] * np.log(self._weights[t])
+            self.weightLogWeights[t] = self._weights[t] * math.log(self._weights[t])
             self.sumOfWeights += self._weights[t]
             self.sumOfWeightLogWeights += self.weightLogWeights[t]
 
-        self.startingEntropy = np.log(self.sumOfWeights) - self.sumOfWeightLogWeights / self.sumOfWeights
+        self.startingEntropy = 0.0 if self.sumOfWeights == 0.0 else (np.log(self.sumOfWeights) - (self.sumOfWeightLogWeights / self.sumOfWeights))
 
-        self._sumsOfOnes = np.empty(self._MXY)
-        self._sumsOfWeights = np.empty(self._MXY)
-        self._sumsOfWeightLogWeights = np.empty(self._MXY)
-        self._entropies = np.empty(self._MXY)
+        self._sumsOfOnes = np.empty(self._MXY, dtype=np.int32)
+        self._sumsOfWeights = np.empty(self._MXY, dtype=np.double)
+        self._sumsOfWeightLogWeights = np.empty(self._MXY, dtype=np.double)
+        self._entropies = np.empty(self._MXY, dtype=np.double)
 
-        self.stack = np.empty(len(self._wave * self._T), dtype=tuple) #new (int, int)[wave.Length * T]
+        self.stack = np.empty(len(self._wave) * self._T, dtype=tuple) #new (int, int)[wave.Length * T]
         self.stacksize = 0
 
-    def Run(self, seed, limit) -> bool:
+    def Run(self, seed: int, limit: int) -> bool:
         # ... run method
-        if self._wave is None:
+        if self.new == True:
             self.Init()
+            self.new = False
 
         self.Clear()
         _random: random.Random = random.Random(seed)
+
         _l = 0
         while (_l < limit or limit < 0):
             _l += 1
@@ -113,9 +111,14 @@ class Model:
                 return True
         return True
 
-    def NextUnobservedNode(self, random: random.Random):
+    def NextUnobservedNode(self, _rand: random.Random):
         # ... next unobserved node logic
+        
+        
+        _i = -1
+        
         if (self.heuristic == self.Heuristic.Scanline):
+            
             _i = self.observedSoFar
             while _i < len(self._wave):
                 if ((not self._periodic) and 
@@ -123,7 +126,7 @@ class Model:
                      or (_i / self._MX + self._N > self._MY))):
                         _i += 1
                         continue
-                if (self._sumsOfOnes[i] > 1):
+                if (self._sumsOfOnes[_i] > 1):
                     self.observedSoFar = _i + 1
                     return _i
                     
@@ -132,28 +135,29 @@ class Model:
         
         min = 1e4
         argmin = -1
-        for i in range(len(self._wave)):
+        for j in range(len(self._wave)):
             if (not self._periodic and 
-                    ((_i % self._MX + self._N > self._MX) 
-                     or (_i / self._MX + self._N > self._MY))):
-                        _i += 1
+                    ((j % self._MX + self._N > self._MX) 
+                     or (j / self._MX + self._N > self._MY))):
+                        # j += 1
                         continue
-            remainingValues = self._sumsOfOnes[i]
-            entropy = self._entropies[i] if self.heuristic == self.Heuristic.Entropy else remainingValues
+            remainingValues = self._sumsOfOnes[j]
+            entropy = self._entropies[j] if self.heuristic == self.Heuristic.Entropy else remainingValues
 
             if (remainingValues > 1 and entropy <= min):
-                noise = 1e-6 * random.random()
+                noise = 1e-6 * _rand.random()
                 if (entropy + noise < min):
                     min = entropy + noise
-                    argmin = i
+                    argmin = j
+            # j += 1
         return argmin
 
-    def Observe(self, node: int, random: random.Random):
+    def Observe(self, node: int, _rand: random.Random):
         # ... observe method
         w = self._wave[node]
         for t in range(self._T):
             self.distribution[t] = self._weights[t] if w[t] else 0.0
-        r: int = Helper.RandomHelper(self.distribution, random.random())
+        r: int = Helper.RandomHelper(self.distribution, _rand.random())
         for t in range(self._T):
             if (w[t] != (t == r)):
                 self.Ban(node, t)
@@ -165,7 +169,7 @@ class Model:
             self.stacksize -= 1
 
             x1 = i1 % self._MX
-            y1 = i1 / self._MX
+            y1 = math.floor(i1 / self._MX)
 
             for d in range(4):
 
@@ -181,12 +185,14 @@ class Model:
                 if (y2 < 0): y2 += self._MY
                 elif (y2 >= self._MY): y2 -= self._MY
 
-                i2 = x2 + y2 * self._MX
+                i2 = int(x2 + y2 * self._MX)
                 p = self._propagator[d][t1]
+                # print(i2)
                 compat = self.compatible[i2]
 
                 for l in range(len(p)):
                     t2 = p[l]
+                    # print(p)
                     comp = compat[t2]
 
                     comp[d] -= 1
@@ -210,7 +216,8 @@ class Model:
         self._sumsOfWeightLogWeights[i] -= self.weightLogWeights[t]
 
         sum = self._sumsOfWeights[i]
-        self._entropies[i] = math.log(sum) - self._sumsOfWeightLogWeights[i] / sum
+        # print(sum)
+        self._entropies[i] = 0.0 if sum == 0.0 else math.log(sum) - self._sumsOfWeightLogWeights[i] / sum
 
     def Clear(self):
         # ... clear method
@@ -232,6 +239,6 @@ class Model:
                 for y in range(self._MY - 1): self.Ban(x + y * self._MX, self._T - 1)
             self.Propagate()
 
-    def Save(self, filename):
+    #def Save(self, filename):
         # ... save method
-        pass
+        #pass
